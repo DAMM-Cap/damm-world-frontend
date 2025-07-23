@@ -1,6 +1,6 @@
 import { TransactionResponse } from "@ethersproject/providers";
 import { useAppKitNetwork } from "@reown/appkit/react";
-import { parseUnits } from "ethers/lib/utils";
+import { parseEther, parseUnits } from "ethers/lib/utils";
 import { useAccount } from "wagmi";
 import { batchTxs, Call, MULTICALL3_ADDRESS } from "../utils/BatchTxs";
 import {
@@ -21,7 +21,7 @@ export interface Safe4337Tx {
 export function useDeposit() {
   const { address } = useAccount();
   const network = useAppKitNetwork();
-  const { sendBatchTx } = useSafe4337BatchTx();
+  const { sendBatchTx, prepareAccountAbstraction } = useSafe4337BatchTx();
 
   const cancelDepositRequest = async () => {
     if (!address) throw new Error("No address found");
@@ -134,52 +134,66 @@ export function useDeposit() {
     amount: string,
     wrapNativeToken: boolean
   ) => {
-    if (!address) throw new Error("No address found");
-
-    const chainId = network.chainId?.toString() ?? "";
-    const { vault, tokenMetadata } = await getSignerAndContract(chainId);
-
-    const amountInWei = parseUnits(amount, tokenMetadata.decimals);
-
-    const calls: Safe4337Tx[] = [];
-
-    if (wrapNativeToken) {
-      const wrapNativeETHTx = await getWrapNativeETHTx(chainId);
-      if (wrapNativeETHTx) {
-        const wrapNativeETHTxCall = {
-          to: wrapNativeETHTx.target,
-          value: amountInWei.toString(),
-          data: wrapNativeETHTx.callData,
-        };
-        calls.push(wrapNativeETHTxCall);
-      }
-    }
-
-    const approveTx = await getApproveTx(
-      chainId,
-      address,
-      vault.address,
-      amountInWei
-    );
-    if (approveTx) {
-      const approveTxCall = {
-        to: approveTx.target,
-        value: "0",
-        data: approveTx.callData,
-      };
-      calls.push(approveTxCall);
-    }
-    const requestDepositCall = {
-      to: vault.address,
-      value: "0",
-      data: vault.interface.encodeFunctionData(
-        "requestDeposit(uint256,address,address,address)",
-        [amountInWei, address, address, address]
-      ),
-    };
-    calls.push(requestDepositCall);
-
     try {
+      if (!address) throw new Error("No address found");
+
+      const chainId = network.chainId?.toString() ?? "";
+      const { vault, tokenMetadata } = await getSignerAndContract(chainId);
+
+      const amountInWei = parseUnits(amount, tokenMetadata.decimals);
+
+      const calls: Safe4337Tx[] = [];
+
+      const safeAddress = await prepareAccountAbstraction();
+      console.log("safeAddress", safeAddress);
+
+      if (wrapNativeToken) {
+        const wrapNativeETHTx = await getWrapNativeETHTx(chainId);
+        if (wrapNativeETHTx) {
+          const wrapNativeETHTxCall = {
+            to: wrapNativeETHTx.target,
+            value: amountInWei.toString(),
+            data: wrapNativeETHTx.callData,
+          };
+          calls.push(wrapNativeETHTxCall);
+        }
+      }
+
+      const setOpBool = true;
+      const setOperatorCall = {
+        to: vault.address,
+        value: parseEther("0").toString(),
+        data: vault.interface.encodeFunctionData("setOperator(address,bool)", [
+          safeAddress,
+          setOpBool,
+        ]),
+      };
+      calls.push(setOperatorCall);
+
+      const approveTx = await getApproveTx(
+        chainId,
+        address,
+        vault.address,
+        amountInWei
+      );
+      if (approveTx) {
+        const approveTxCall = {
+          to: approveTx.target,
+          value: parseEther("0").toString(),
+          data: approveTx.callData,
+        };
+        calls.push(approveTxCall);
+      }
+      const requestDepositCall = {
+        to: vault.address,
+        value: parseEther("0").toString(),
+        data: vault.interface.encodeFunctionData(
+          "requestDeposit(uint256,address,address,address)",
+          [amountInWei, address, address, address]
+        ),
+      };
+      calls.push(requestDepositCall);
+
       const tx = await sendBatchTx(calls);
       return tx as unknown as TransactionResponse;
     } catch (error) {
