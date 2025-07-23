@@ -31,26 +31,71 @@ export async function getSafe4337Pack(address: string, chainId: string) {
   console.log("signer", signer.account?.address);
   const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY;
 
-  const pack = await Safe4337Pack.init({
+  if (!PIMLICO_API_KEY) {
+    throw new Error(
+      "NEXT_PUBLIC_PIMLICO_API_KEY environment variable is required"
+    );
+  }
+
+  if (!address) {
+    throw new Error("Address is required for Safe4337Pack initialization");
+  }
+
+  if (!chainId) {
+    throw new Error("ChainId is required for Safe4337Pack initialization");
+  }
+
+  // Go back to Pimlico with paymaster to cover gas costs
+  const bundlerUrl = PIMLICO_API_KEY
+    ? `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_API_KEY}`
+    : undefined;
+
+  const paymasterUrl = PIMLICO_API_KEY
+    ? `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_API_KEY}`
+    : undefined;
+
+  console.log("Debug - bundlerUrl:", bundlerUrl);
+  console.log("Debug - paymasterUrl:", paymasterUrl);
+
+  // Use the correct Safe4337Pack configuration with paymaster
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const initOptions: any = {
     provider: provider,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    signer: signer as any,
-    bundlerUrl: `https://api.pimlico.io/v2/${chainId}/rpc?add_balance_override&apikey=${PIMLICO_API_KEY}`,
-    customContracts: {
-      entryPointAddress: "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789", // Entrypoint v0.6
-    },
-    safeModulesVersion: "0.2.0", // default Safe4337Pack version, only compatible with Entrypoint v0.6
+    bundlerUrl: bundlerUrl,
+    entryPointAddress: "0x0000000071727De22E5E9d8BAf0edAc6f37da032", // Entrypoint v0.7
+    safeModulesVersion: "0.3.0", // Try newer version for better EntryPoint v0.7 support
     options: {
       owners: [address],
       threshold: 1,
     },
-    paymasterOptions: {
-      paymasterUrl: `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${PIMLICO_API_KEY}`,
-      paymasterAddress: "0x0000000000000000000000000000000000000000",
-      paymasterTokenAddress: "0x0000000000000000000000000000000000000000",
-      amountToApprove: BigInt(0),
-    },
-  });
+  };
+
+  // Add paymaster options to cover gas costs
+  if (paymasterUrl) {
+    initOptions.paymasterOptions = {
+      paymasterUrl: paymasterUrl,
+      paymasterAddress: "0x00000000000000fB866DaAA79352cC568a005D96",
+      paymasterTokenAddress: "0xFC3e86566895Fb007c6A0d3809eb2827DF94F751",
+    };
+  }
+
+  console.log("Debug - initOptions keys:", Object.keys(initOptions));
+  console.log("Debug - bundlerUrl:", initOptions.bundlerUrl);
+  console.log("Debug - entryPointAddress:", initOptions.entryPointAddress);
+  console.log("Debug - owners:", initOptions.options.owners);
+  console.log("Debug - threshold:", initOptions.options.threshold);
+  if (initOptions.paymasterOptions) {
+    console.log(
+      "Debug - paymasterUrl:",
+      initOptions.paymasterOptions.paymasterUrl
+    );
+    console.log(
+      "Debug - paymasterAddress:",
+      initOptions.paymasterOptions.paymasterAddress
+    );
+  }
+
+  const pack = await Safe4337Pack.init(initOptions);
 
   console.log("pack", pack.getChainId());
   return pack;
@@ -129,6 +174,7 @@ export function useSafe4337BatchTx() {
       } catch (error) {
         console.error("Safe batch error", error);
         setResult({ status: "error", error: error as Error });
+        throw error; // Re-throw to be caught by the calling function
       }
     },
     [address, chainId]
