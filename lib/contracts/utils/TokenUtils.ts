@@ -51,6 +51,19 @@ export async function handleApprove(
   }
 }
 
+export async function getWrapNativeETHTx(chainId: string): Promise<Call> {
+  const { UNDERLYING_TOKEN } = getEnvVars(getTypedChainId(Number(chainId)));
+  const { signer } = await getSignerAndContract(chainId);
+
+  const weth = new ethers.Contract(UNDERLYING_TOKEN, WETH_ABI, signer);
+
+  return {
+    target: weth.address,
+    allowFailure: false,
+    callData: weth.interface.encodeFunctionData("deposit"),
+  };
+}
+
 export async function wrapNativeETH(chainId: string, amountInETH: string) {
   const { UNDERLYING_TOKEN } = getEnvVars(getTypedChainId(Number(chainId)));
   const { signer } = await getSignerAndContract(chainId);

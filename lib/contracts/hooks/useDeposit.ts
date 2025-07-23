@@ -5,14 +5,23 @@ import { useAccount } from "wagmi";
 import { batchTxs, Call, MULTICALL3_ADDRESS } from "../utils/BatchTxs";
 import {
   getApproveTx,
+  getWrapNativeETHTx,
   handleApprove,
   wrapNativeETH,
 } from "../utils/TokenUtils";
 import { getSignerAndContract } from "../utils/utils";
+import { useSafe4337BatchTx } from "./useSafe4337Batch";
+
+export interface Safe4337Tx {
+  to: string;
+  value: string;
+  data: string;
+}
 
 export function useDeposit() {
   const { address } = useAccount();
   const network = useAppKitNetwork();
+  const { sendBatchTx } = useSafe4337BatchTx();
 
   const cancelDepositRequest = async () => {
     if (!address) throw new Error("No address found");
@@ -121,9 +130,71 @@ export function useDeposit() {
     }
   };
 
+  const submitRequestDepositOnMulticallSafe4337 = async (
+    amount: string,
+    wrapNativeToken: boolean
+  ) => {
+    if (!address) throw new Error("No address found");
+
+    const chainId = network.chainId?.toString() ?? "";
+    const { vault, tokenMetadata } = await getSignerAndContract(chainId);
+
+    const amountInWei = parseUnits(amount, tokenMetadata.decimals);
+
+    const calls: Safe4337Tx[] = [];
+
+    if (wrapNativeToken) {
+      const wrapNativeETHTx = await getWrapNativeETHTx(chainId);
+      if (wrapNativeETHTx) {
+        const wrapNativeETHTxCall = {
+          to: wrapNativeETHTx.target,
+          value: amountInWei.toString(),
+          data: wrapNativeETHTx.callData,
+        };
+        calls.push(wrapNativeETHTxCall);
+      }
+    }
+
+    const approveTx = await getApproveTx(
+      chainId,
+      address,
+      vault.address,
+      amountInWei
+    );
+    if (approveTx) {
+      const approveTxCall = {
+        to: approveTx.target,
+        value: "0",
+        data: approveTx.callData,
+      };
+      calls.push(approveTxCall);
+    }
+    const requestDepositCall = {
+      to: vault.address,
+      value: "0",
+      data: vault.interface.encodeFunctionData(
+        "requestDeposit(uint256,address,address,address)",
+        [amountInWei, address, address, address]
+      ),
+    };
+    calls.push(requestDepositCall);
+
+    try {
+      const tx = await sendBatchTx(calls);
+      return tx as unknown as TransactionResponse;
+    } catch (error) {
+      console.warn(
+        "Safe4337 batch transaction failed, falling back to sequential:",
+        error
+      );
+      return await submitRequestDeposit(amount, wrapNativeToken);
+    }
+  };
+
   return {
     submitRequestDeposit,
     submitRequestDepositOnMulticall,
+    submitRequestDepositOnMulticallSafe4337,
     cancelDepositRequest,
   };
 }
