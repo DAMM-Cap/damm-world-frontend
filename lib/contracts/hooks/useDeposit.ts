@@ -10,9 +10,9 @@ import {
   wrapNativeETH,
 } from "../utils/TokenUtils";
 import { getSignerAndContract } from "../utils/utils";
-import { useSafe4337BatchTx } from "./useSafe4337Batch";
+import { useThirdweb4337BatchTx } from "./useThirdweb4337Batch";
 
-export interface Safe4337Tx {
+export interface AA4337Tx {
   to: string;
   value: string;
   data: string;
@@ -21,7 +21,7 @@ export interface Safe4337Tx {
 export function useDeposit() {
   const { address } = useAccount();
   const network = useAppKitNetwork();
-  const { sendBatchTx, prepareAccountAbstraction } = useSafe4337BatchTx();
+  const { sendBatchTx, prepareAccountAbstraction } = useThirdweb4337BatchTx();
 
   const cancelDepositRequest = async () => {
     if (!address) throw new Error("No address found");
@@ -130,7 +130,7 @@ export function useDeposit() {
     }
   };
 
-  const submitRequestDepositOnMulticallSafe4337 = async (
+  const submitRequestDepositAA4337Batch = async (
     amount: string,
     wrapNativeToken: boolean
   ) => {
@@ -142,10 +142,10 @@ export function useDeposit() {
 
       const amountInWei = parseUnits(amount, tokenMetadata.decimals);
 
-      const calls: Safe4337Tx[] = [];
+      const calls: AA4337Tx[] = [];
 
-      const safeAddress = await prepareAccountAbstraction();
-      console.log("safeAddress", safeAddress);
+      const smartAccountAddress = await prepareAccountAbstraction();
+      console.log("smartAccountAddress", smartAccountAddress);
 
       if (wrapNativeToken) {
         const wrapNativeETHTx = await getWrapNativeETHTx(chainId);
@@ -164,7 +164,7 @@ export function useDeposit() {
         to: vault.address,
         value: parseEther("0").toString(),
         data: vault.interface.encodeFunctionData("setOperator(address,bool)", [
-          safeAddress,
+          smartAccountAddress,
           setOpBool,
         ]),
       };
@@ -198,7 +198,7 @@ export function useDeposit() {
       return tx as unknown as TransactionResponse;
     } catch (error) {
       console.warn(
-        "Safe4337 batch transaction failed, falling back to sequential:",
+        "ERC-4337 batch transaction failed, falling back to sequential:",
         error
       );
       return await submitRequestDeposit(amount, wrapNativeToken);
@@ -208,7 +208,7 @@ export function useDeposit() {
   return {
     submitRequestDeposit,
     submitRequestDepositOnMulticall,
-    submitRequestDepositOnMulticallSafe4337,
+    submitRequestDepositAA4337Batch,
     cancelDepositRequest,
   };
 }
