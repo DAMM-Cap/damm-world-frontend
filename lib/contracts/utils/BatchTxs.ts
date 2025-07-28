@@ -12,6 +12,7 @@ export interface Call {
   target: string;
   allowFailure: boolean;
   callData: string;
+  params?: any[];
 }
 
 export async function batchTxs(chainId: string, calls: Call[], value?: string) {

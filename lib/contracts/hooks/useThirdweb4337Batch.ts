@@ -1,33 +1,45 @@
 "use client";
 
-import { useAppKitNetwork } from "@reown/appkit/react";
+import { useAppKitAccount, useAppKitNetwork } from "@reown/appkit/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Chain,
   createThirdwebClient,
   defineChain,
   getContract,
-  getContractEvents,
   prepareContractCall,
-  prepareEvent,
   sendTransaction,
   simulateTransaction,
   ThirdwebClient,
   waitForReceipt,
 } from "thirdweb";
-import { Account, inAppWallet, smartWallet } from "thirdweb/wallets";
-import { useAccount } from "wagmi";
+import {
+  Account,
+  createWallet,
+  inAppWallet,
+  smartWallet,
+} from "thirdweb/wallets";
 import { AA4337Tx } from "./useDeposit";
 
+type ThirdwebTx = {
+  address: string;
+  contract: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  method: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  params?: any[];
+};
+
 export function useThirdweb4337BatchTx() {
-  const { address } = useAccount();
   const network = useAppKitNetwork();
+  const account = useAppKitAccount();
+  const address = account?.address;
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
   const [client, setClient] = useState<ThirdwebClient | null>(null);
   const [chain, setChain] = useState<Chain | null>(null);
-  const smartWalletAddress = useRef<string | null>(null);
+  const accountRef = useRef<Account | null>(null);
   const [factoryAddress, setFactoryAddress] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,17 +49,164 @@ export function useThirdweb4337BatchTx() {
       });
 
       const chain = defineChain(Number(network.chainId));
+      const factoryAddress = process.env
+        .NEXT_PUBLIC_THIRDWEB_FACTORY_ADDRESS as string;
+      setClient(client);
+      setChain(chain);
+      setFactoryAddress(factoryAddress);
+    };
+
+    if (address) {
+      console.log("Address: ", address);
+      initialize();
+    }
+  }, [address, network.chainId]);
+
+  const sendBatchTx = useCallback(
+    async (txs: AA4337Tx[]) => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        //const account = accountRef.current;
+
+        if (!address) throw new Error("No address found");
+        if (!client || !chain /* || !account */)
+          throw new Error("No client found");
+
+        //const personalWallet = inAppWallet();
+        const personalWallet = inAppWallet({
+          // enable gasless transactions for the wallet
+          executionMode: {
+            mode: "EIP7702",
+            sponsorGas: false,
+          },
+        });
+        const personalAccount = await personalWallet.connect({
+          client,
+          strategy: "wallet",
+          wallet: createWallet("io.metamask"),
+          chain,
+        });
+
+        console.log("Personal account: ", personalAccount.address);
+
+        // Create and connect smart wallet
+        const wallet = smartWallet({
+          chain,
+          factoryAddress: factoryAddress!,
+          gasless: false,
+        });
+
+        const account = await wallet.connect({
+          client,
+          personalAccount,
+        });
+
+        console.log("Smart account: ", account);
+
+        const methods = [
+          "function deposit()",
+          "function setOperator(address operator, bool approved)",
+          "function approve(address guy, uint wad)",
+          "function requestDeposit(uint256 assets,address controller,address owner,address referral)",
+        ];
+
+        console.log("Tx: ", txs);
+        console.log("Methods: ", methods);
+
+        for (let i = 0; i < txs.length; i++) {
+          console.log("Sending transaction...");
+
+          const receipt = await sendTransactionHelper(
+            {
+              address: txs[i].to,
+              contract: txs[i].to,
+              method: methods[i],
+              params: txs[i].params,
+            },
+            account
+          );
+          console.log("Receipt: ", receipt);
+        }
+        return;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error("Unknown error");
+        setError(error);
+        throw error;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [address, client, chain]
+  );
+
+  const sendTransactionHelper = async (tx: ThirdwebTx, account: Account) => {
+    try {
+      if (!address) throw new Error("No address found");
+      if (!client || !chain /* || !account */)
+        throw new Error("No client found");
+
+      const contract = getContract({
+        client,
+        chain,
+        address: tx.address,
+      });
+
+      // prepare the contract write call
+      const transaction = prepareContractCall({
+        contract,
+        method: tx.method,
+        params: tx.params,
+      });
+
+      console.log("Transaction: ", transaction);
+
+      console.log("Start Simulation...");
+
+      const simulation = await simulateTransaction({
+        account,
+        transaction,
+      });
+
+      console.log("Simulation: ", simulation);
+
+      const { transactionHash } = await sendTransaction({
+        account,
+        transaction,
+      });
+
+      console.log("Transaction hash: ", transactionHash);
+
+      const receipt = await waitForReceipt({
+        client,
+        chain,
+        transactionHash,
+      });
+
+      return receipt;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      throw error;
+    }
+  };
+
+  const prepareAccountAbstraction = useCallback(async () => {
+    try {
+      if (!address) throw new Error("No address found");
+      if (!client || !chain || !factoryAddress)
+        throw new Error("No client found");
 
       // Connect personal wallet first
       const personalWallet = inAppWallet();
       const personalAccount = await personalWallet.connect({
         client,
+        strategy: "wallet",
+        wallet: createWallet("io.metamask"),
         chain,
-        strategy: "guest",
       });
 
-      const factoryAddress = process.env
-        .NEXT_PUBLIC_THIRDWEB_FACTORY_ADDRESS as string;
+      console.log("Personal account: ", personalAccount.address);
 
       // Create and connect smart wallet
       const wallet = smartWallet({
@@ -61,137 +220,21 @@ export function useThirdweb4337BatchTx() {
         personalAccount,
       });
 
-      setAccount(account);
-      setClient(client);
-      setChain(chain);
-      setFactoryAddress(factoryAddress);
-    };
-    if (!address) throw new Error("No address found");
-    initialize();
-  }, [address, network.chainId]);
+      console.log("Smart account: ", account.address);
 
-  const sendBatchTx = useCallback(
-    async (txs: AA4337Tx[]) => {
-      try {
-        setIsLoading(true);
-        setError(null);
-
-        if (!address) throw new Error("No address found");
-        if (!client || !chain || !account || !smartWalletAddress.current)
-          throw new Error("No client found");
-
-        const contract = getContract({
-          client,
-          chain,
-          address: smartWalletAddress.current,
-        });
-
-        // Execute batch transaction using multicall
-        const batchTx = {
-          chainId: Number(network.chainId),
-          calls: txs.map((tx) => ({
-            target: tx.to as `0x${string}`,
-            callData: tx.data as `0x${string}`,
-            value: BigInt(tx.value),
-          })),
-        };
-
-        const data = batchTx.calls.map((call) => call.callData);
-        console.log("data", data);
-
-        console.log("Prepare");
-
-        const transaction = prepareContractCall({
-          contract,
-          method: "function multicall(bytes[] data) returns (bytes[] results)",
-          params: [data],
-        });
-        console.log("transaction", transaction);
-        console.log("SIMULATE");
-
-        const simulation = await simulateTransaction({
-          account,
-          transaction,
-        });
-        console.log("ACA");
-        console.log("simulation", simulation);
-
-        const { transactionHash } = await sendTransaction({
-          account,
-          transaction,
-        });
-
-        const receipt = await waitForReceipt({
-          client,
-          chain,
-          transactionHash,
-        });
-        console.log("receipt", receipt);
-
-        return receipt;
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error("Unknown error");
-        setError(error);
-        throw error;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [address, client, chain, account, network.chainId]
-  );
-
-  const prepareAccountAbstraction = useCallback(async () => {
-    try {
-      if (!address) throw new Error("No address found");
-      if (!client || !chain || !account || !factoryAddress)
-        throw new Error("No client found");
-
-      const contract = getContract({
-        client,
-        chain,
-        address: factoryAddress,
-      });
-
-      const _data = "0x";
-
-      const transaction = prepareContractCall({
-        contract,
-        method:
-          "function createAccount(address _admin, bytes _data) returns (address)",
-        params: [address, _data],
-      });
-      console.log("transaction", transaction);
-      const { transactionHash } = await sendTransaction({
-        transaction,
-        account,
-      });
-      console.log("transactionHash", transactionHash);
-
-      const preparedEvent = prepareEvent({
-        signature:
-          "event AccountCreated(address indexed account, address indexed accountAdmin)",
-      });
-      const events = await getContractEvents({
-        contract,
-        events: [preparedEvent],
-      });
-      console.log("events", events[1].args.account);
-      const newAccountAddress = events[1].args.account;
-
-      smartWalletAddress.current = newAccountAddress;
-
-      return newAccountAddress;
+      accountRef.current = account;
     } catch (err) {
       const error = err instanceof Error ? err : new Error("Unknown error");
       setError(error);
       throw error;
     }
-  }, [address, client, chain, account, factoryAddress]);
+  }, [address, client, chain, factoryAddress]);
 
   return {
     sendBatchTx,
     prepareAccountAbstraction,
     isLoading,
     error,
+    smartWalletAddress: accountRef.current?.address,
   };
 }

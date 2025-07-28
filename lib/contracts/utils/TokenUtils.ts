@@ -29,6 +29,7 @@ export async function getApproveTx(
       target: underlyingToken.address,
       allowFailure: false,
       callData: approveData,
+      params: [vaultAddress, amountInWei],
     };
   }
   return null;

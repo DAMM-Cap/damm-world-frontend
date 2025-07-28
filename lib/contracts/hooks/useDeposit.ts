@@ -16,12 +16,14 @@ export interface AA4337Tx {
   to: string;
   value: string;
   data: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  params?: any[];
 }
 
 export function useDeposit() {
   const { address } = useAccount();
   const network = useAppKitNetwork();
-  const { sendBatchTx, prepareAccountAbstraction } = useThirdweb4337BatchTx();
+  const { sendBatchTx, smartWalletAddress } = useThirdweb4337BatchTx();
 
   const cancelDepositRequest = async () => {
     if (!address) throw new Error("No address found");
@@ -144,9 +146,6 @@ export function useDeposit() {
 
       const calls: AA4337Tx[] = [];
 
-      const smartAccountAddress = await prepareAccountAbstraction();
-      console.log("smartAccountAddress", smartAccountAddress);
-
       if (wrapNativeToken) {
         const wrapNativeETHTx = await getWrapNativeETHTx(chainId);
         if (wrapNativeETHTx) {
@@ -163,8 +162,8 @@ export function useDeposit() {
       const setOperatorCall = {
         to: vault.address,
         value: parseEther("0").toString(),
-        data: vault.interface.encodeFunctionData("setOperator(address,bool)", [
-          smartAccountAddress,
+        data: vault.interface.encodeFunctionData("setOperator", [
+          smartWalletAddress,
           setOpBool,
         ]),
       };
@@ -181,6 +180,7 @@ export function useDeposit() {
           to: approveTx.target,
           value: parseEther("0").toString(),
           data: approveTx.callData,
+          params: approveTx.params,
         };
         calls.push(approveTxCall);
       }
@@ -191,6 +191,7 @@ export function useDeposit() {
           "requestDeposit(uint256,address,address,address)",
           [amountInWei, address, address, address]
         ),
+        params: [amountInWei, address, address, address],
       };
       calls.push(requestDepositCall);
 
